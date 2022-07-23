@@ -1,8 +1,12 @@
 import torch
+import orjson
 import torchvision
 from BUTD import BU, TD
+from types import SimpleNamespace
 from torchvision.io.image import read_image
+
 torchvision.set_image_backend('accimage')
+config = SimpleNamespace(**orjson.loads(open('config.json', "rb").read()))
 
 def cuda_test():
     print(f"torch {torch.__version__}, cuda.is_available={torch.cuda.is_available()}")

@@ -1,0 +1,9 @@
+{
+    "train_data": "../VQA2.0/train2014",
+    "train_annotations": "../VQA2.0/v2_mscoco_train2014_annotations.json",
+    "train_questions": "../VQA2.0/v2_OpenEnded_mscoco_train2014_questions.json",
+    
+    "val_data": "/root/code/VQA2.0/val2014",
+    "val_annotations": "../VQA2.0/v2_mscoco_val2014_annotations.json",
+    "val_questions": "../VQA2.0/v2_OpenEnded_mscoco_val2014_questions.json"
+}

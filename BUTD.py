@@ -1,8 +1,15 @@
-from turtle import forward
+import os
+import sys
+import csv
 import torch
+import base64
+import orjson
 import torchvision
 import torchtext.vocab
+import torch.utils.data
+import torchtext.data.utils
 
+csv.field_size_limit(sys.maxsize)
 
 class BUTD(torch.nn.Module):
     def __init__(self, bu_model, td_model):
@@ -79,8 +86,8 @@ class TD(torch.nn.Module):
         """
         # Question Embedding
         super(TD, self).__init__()
-        glove_vectors= torchtext.vocab.GloVe(name="840B", dim=w_dim)  # ?
-        self.emb = torch.nn.Embedding.from_pretrained(glove_vectors.vectors, padding_idx=0, freeze=False)
+        self.tokenizer = torchtext.data.utils.get_tokenizer("basic_english")
+        self.emb = torchtext.vocab.GloVe(name="840B", dim=w_dim)
         self.gru = torch.nn.GRU(input_size=w_dim, hidden_size=hid_dim, num_layers=1, bidirectional=False, batch_first=True)
         # Image Attention
         self.fa = GatedTanh(v_dim + hid_dim, hid_dim)
@@ -98,10 +105,11 @@ class TD(torch.nn.Module):
         """
         
         :param v: Feature vector, shape=[B, K, D]
-        :param q: Question, shape=[B, 14]
+        :param q: Question str, shape=[B]
         """
         # Question Embedding
-        q = self.emb(q)
+        q = [self.emb.get_vecs_by_tokens(self.tokenizer(i)[:14]) for i in q]
+        q = torch.nn.utils.rnn.pad_sequence(q, batch_first=True, padding_value=0).to(device=v.device)
         _, hidden = self.gru(q)  # hidden.shape=[1, B, H]
         q = hidden.reshape(hidden.shape[1], 1, -1)  # [B, 1, H]
         # Image Attention
@@ -112,8 +120,7 @@ class TD(torch.nn.Module):
         # Multimodal Fusion
         h = torch.mul(self.fq(q.squeeze(1)), self.fv(v_hat))  # [B, H]
         # Output Classifier
-        return torch.sigmoid(self.linear2(self.fo_text(h)) + self.linear3(self.fo_img(h)))  # [B, N]
-
+        return self.linear2(self.fo_text(h)) + self.linear3(self.fo_img(h))  # [B, N]
 
 class GatedTanh(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
@@ -126,3 +133,53 @@ class GatedTanh(torch.nn.Module):
         g = torch.sigmoid(self.linear2(x))
         y = torch.mul(y_hat, g)
         return y
+
+
+class VQA2(torch.utils.data.Dataset):
+    def __init__(self, data_path, qu_path, ann_path, ann_num_classes, mode='img'):
+        """
+        
+        :param data_path: Mode=img -> img folder, mode=feature -> feature tsv file.
+        :param qu_path: Queation file path.
+        :param ann_path: Preprocess annotations file path.
+        :param ann_num_classes: Num of types of words in annotations file.
+        :param mode: Img or feature. Use the original image or preprocessed image features as required.
+        """
+        
+        super().__init__()
+        assert mode in ['img', 'feature']
+        self.mode = mode
+        qus = orjson.loads(open(qu_path, "rb").read())
+        qus = qus['questions']
+        anns = orjson.loads(open(ann_path, "rb").read())
+        if mode == "img":
+            data_path = os.path.join(data_path, "COCO_" + qus['data_subtype'] + "_{:012}.jpg")
+        else:
+            data_path = os.path.join(data_path, "COCO_trainval_{:012}.pkl")
+        
+        # qu example: {"image_id": 458752, "question": "Is this man a professional baseball player?", "question_id": 458752003}
+        # ann example: {"question_id": 458752003, "image_id": 458752, "labels": [3, 9], "scores": [1, 0.3]}
+        self.imgs, self.qus, self.anns = [], [], []
+        for index in range(len(qus)):
+            if qus[index]['question_id'] != anns[index]['question_id']:
+                raise RuntimeError(f"question_id in qu:{qus[index]['question_id']} and "\
+                                    + f"ann:{anns[index]['question_id']} with same index:{index} not match.")
+            
+            self.imgs.append(data_path.format(qus[index]['image_id']))
+            self.qus.append(qus[index]['question'])
+            ann = torch.zeros(ann_num_classes)
+            ann[anns[index]['labels']] = torch.tensor(anns[index]['scores']).float()
+            self.anns.append(ann)
+            if index % 10000 == 0:
+                print(f"Loading dataset:{index}", end='\r')
+        print("")
+    
+    def __getitem__(self, index):
+        if self.mode == 'img':
+            img = torchvision.io.read_image(self.imgs[index])
+        else:
+            img = torch.load(self.imgs[index])
+        return img, self.qus[index], self.anns[index]
+
+    def __len__(self):
+        return len(self.qus)

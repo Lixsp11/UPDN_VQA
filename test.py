@@ -1,13 +1,26 @@
+import sys
+import csv
+from itsdangerous import base64_decode
 import torch
+import base64
+import config
+import numpy as np
+import pandas as pd
 import torchvision
-from BUTD import BU, TD
+csv.field_size_limit(sys.maxsize)
 
 if __name__ == "__main__":
-    bu_model = BU().cuda()
-    bu_model.eval()
-    td_model = TD()
+    fieldnames = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'features']
+    features = dict()
+    with open(config.bottom_up_feature, 'r', encoding='ascii') as f:
+        reader = csv.DictReader(f, delimiter='\t', fieldnames=fieldnames)
+        
+        for item in reader:
+            feature = base64.b64decode(item['features'])
+            feature = torch.frombuffer(feature, dtype=torch.float32).reshape((36, -1))
+            features[item['image_id']] = feature
+            break
+    print(features['150367'].shape)
 
-    img = torchvision.io.read_image("grace_hopper_517x606.jpg").unsqueeze(0).cuda()
-    v = bu_model(torch.vstack((img, img, img)))
-    y = td_model(v, torch.randint(0, 10, (3, 14), device='cuda'))
-    print(y.shape)
+    f = pd.read_csv(config.bottom_up_feature, index_col='image_id', dtype=np.float32, chunksize=5000)
+    print(f['150367'])

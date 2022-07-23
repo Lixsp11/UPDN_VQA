@@ -1,12 +1,14 @@
+import time
+import config
 import torch
-import orjson
 import torchvision
-from BUTD import BU, TD
-from types import SimpleNamespace
-from torchvision.io.image import read_image
+import torch.utils.data
+from BUTD import BU, TD, VQA2
+from torch.cuda.amp import autocast, GradScaler
+# from torch.utils.tensorboard import SummaryWriter
+
 
 torchvision.set_image_backend('accimage')
-config = SimpleNamespace(**orjson.loads(open('config.json', "rb").read()))
 
 def cuda_test():
     print(f"torch {torch.__version__}, cuda.is_available={torch.cuda.is_available()}")
@@ -15,15 +17,59 @@ def cuda_test():
         print(torch.cuda.get_device_name())
         print('\n')
 
+@torch.no_grad()
+def log_data():
+    global epoch, iteration, loss, time_, ann_hat, ann
+    # compute acc
+    acc = 0.
+    for y_hat, y in zip(ann_hat, ann):
+        k = (y != 0.).sum().item()
+        if k != 0:
+            _, indics_hat = torch.topk(y_hat, k=k)
+            _, indics = torch.topk(y, k=k)
+            acc += len(set(indics_hat.tolist()) & set(indics.tolist())) * 1.0 / k
+        else:
+            continue
+    acc /= ann.shape[0]
+
+    log = f"Epoch={epoch:03}, Iteration={iteration:06}, Loss={loss.detach().item():6.5f}, " \
+          f"Acc={acc:6.5f}, Time={time.time() - time_:2.4f}"
+    print(log)
+    with open('train.log', 'a') as f:
+        f.write(log + '\n')
+    time_ = time.time()
+    
+
 if __name__ == "__main__":
     cuda_test()
 
-    bu_model = BU().cuda()
-    td_model = TD().cuda()
-    bu_model.eval()
+    # writer = SummaryWriter("tf-logs/")
+    train_dataset = VQA2(config.trainval_feature, config.train_questions, config.train_annotations, 
+                            config.ann_num_classes, mode='feature')
+    # val_dataset = VQA2(config.trainval_feature, config.val_questions, config.val_annotations, 
+    #                         config.ann_num_classes, mode='feature')
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, 
+                                                num_workers=8, pin_memory=True)
+    # val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True, 
+    #                                             num_workers=8, pin_memory=True)
+    
+    model = TD(N=config.ann_num_classes).cuda()
+    Loss = torch.nn.BCEWithLogitsLoss()
+    optim = torch.optim.Adadelta(model.parameters(), lr=config.lr)
+    scaler = GradScaler()
 
+    iteration, epoch, time_ = 0, 0, time.time()
+    while iteration < 1e5:
+        epoch += 1
+        for img, qu, ann in train_loader:
+            iteration += 1
+            with autocast():
+                ann_hat = model(img.cuda(non_blocking=True), qu)
+                loss = Loss(ann_hat, ann.cuda())
+            scaler.scale(loss).backward()
+            scaler.step(optim)
+            scaler.update()
+            optim.zero_grad()
 
-    img = torchvision.io.read_image("grace_hopper_517x606.jpg").unsqueeze(0).cuda()
-    v = bu_model(torch.vstack((img, img, img)))
-    y = td_model(v, torch.randint(0, 10, (3, 14), device='cuda'))
-    print(y.shape)
+            if iteration % 100 == 0:
+                log_data()

@@ -13,4 +13,4 @@ trainval_feature = root_path + "trainval_resnet101_faster_rcnn_genome_36"
 ann_num_classes = 4902
 
 batch_size = 512
-lr = 0.01
+lr = 1.0

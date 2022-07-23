@@ -21,19 +21,21 @@ def cuda_test():
 def log_data():
     global epoch, iteration, loss, time_, ann_hat, ann
     # compute acc
-    acc = 0.
+    topk_acc = 0.
     for y_hat, y in zip(ann_hat, ann):
-        k = (y != 0.).sum().item()
+        k = (y == 1.).sum().item()
         if k != 0:
             _, indics_hat = torch.topk(y_hat, k=k)
             _, indics = torch.topk(y, k=k)
-            acc += len(set(indics_hat.tolist()) & set(indics.tolist())) * 1.0 / k
+            topk_acc += len(set(indics_hat.tolist()) & set(indics.tolist())) * 1.0 / k
         else:
             continue
-    acc /= ann.shape[0]
+    topk_acc /= ann.shape[0]
+    top1_acc = (ann_hat.argmax(dim=-1) == ann.argmax(dim=-1)).sum() / ann_hat.shape[0]
 
     log = f"Epoch={epoch:03}, Iteration={iteration:06}, Loss={loss.detach().item():6.5f}, " \
-          f"Acc={acc:6.5f}, Time={time.time() - time_:2.4f}"
+          f"Top1 Acc={top1_acc.item():6.5f}, Topk Acc={topk_acc:6.5f}, " \
+          f"Time={time.time() - time_:2.4f}"
     print(log)
     with open('train.log', 'a') as f:
         f.write(log + '\n')
@@ -54,21 +56,25 @@ if __name__ == "__main__":
     #                                             num_workers=8, pin_memory=True)
     
     model = TD(N=config.ann_num_classes).cuda()
-    Loss = torch.nn.BCEWithLogitsLoss()
+    Loss = torch.nn.CrossEntropyLoss()
     optim = torch.optim.Adadelta(model.parameters(), lr=config.lr)
-    scaler = GradScaler()
+    # scaler = GradScaler()
 
     iteration, epoch, time_ = 0, 0, time.time()
     while iteration < 1e5:
         epoch += 1
+        model.train()
         for img, qu, ann in train_loader:
             iteration += 1
-            with autocast():
-                ann_hat = model(img.cuda(non_blocking=True), qu)
-                loss = Loss(ann_hat, ann.cuda())
-            scaler.scale(loss).backward()
-            scaler.step(optim)
-            scaler.update()
+            img, ann = img.cuda(non_blocking=True), ann.cuda()
+            # with autocast():
+            ann_hat = model(img, qu)
+            loss = Loss(ann_hat, ann)
+            loss.backward()
+            # scaler.scale(loss).backward()
+            # scaler.step(optim)
+            # scaler.update()
+            optim.step()
             optim.zero_grad()
 
             if iteration % 100 == 0:

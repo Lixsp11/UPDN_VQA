@@ -127,12 +127,13 @@ class GatedTanh(torch.nn.Module):
         super(GatedTanh, self).__init__()
         self.linear1 = torch.nn.Linear(in_dim, out_dim, bias=True)
         self.linear2 = torch.nn.Linear(in_dim, out_dim, bias=True)
+        self.dropout = torch.nn.Dropout()
     
     def forward(self, x):
         y_hat = torch.tanh(self.linear1(x))
         g = torch.sigmoid(self.linear2(x))
         y = torch.mul(y_hat, g)
-        return y
+        return self.dropout(y)
 
 
 class VQA2(torch.utils.data.Dataset):

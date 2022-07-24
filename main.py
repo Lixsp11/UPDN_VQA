@@ -5,7 +5,7 @@ import torchvision
 import torch.utils.data
 from BUTD import BU, TD, VQA2
 from torch.cuda.amp import autocast, GradScaler
-# from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 
 torchvision.set_image_backend('accimage')
@@ -39,13 +39,20 @@ def log_data():
     print(log)
     with open('train.log', 'a') as f:
         f.write(log + '\n')
+    
+    if iteration % 3000 == 0:
+        torch.save(model.state_dict(), 'TD.pt')
+    
+    writer.add_scalar('CELoss', loss.detach().item(), global_step=iteration)
+    writer.add_scalar('Top1 Acc', top1_acc.item(), global_step=iteration)
+    writer.add_scalar('Topk Acc', topk_acc, global_step=iteration)
     time_ = time.time()
     
 
 if __name__ == "__main__":
     cuda_test()
 
-    # writer = SummaryWriter("tf-logs/")
+    writer = SummaryWriter("tf-logs/")
     train_dataset = VQA2(config.trainval_feature, config.train_questions, config.train_annotations, 
                             config.ann_num_classes, mode='feature')
     # val_dataset = VQA2(config.trainval_feature, config.val_questions, config.val_annotations, 

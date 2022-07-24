@@ -1,4 +1,4 @@
-root_path = "/root/code/VQA2.0/"
+root_path = "/code/"
 
 train_questions = root_path + "v2_OpenEnded_mscoco_train2014_questions.json"
 train_annotations = root_path + "train_target.json"
@@ -13,4 +13,4 @@ trainval_feature = root_path + "trainval_resnet101_faster_rcnn_genome_36"
 ann_num_classes = 4902
 
 batch_size = 512
-lr = 1.0
+lr = 0.1 

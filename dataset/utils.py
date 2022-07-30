@@ -4,6 +4,7 @@ import tqdm
 import torch
 import base64
 import torchtext
+import torch.nn.functional as F
 
 
 class Tokenizer(object):
@@ -26,7 +27,8 @@ class WordEmbedding(object):
         self.embd = torchtext.vocab.GloVe(name="840B", dim=w_dim)
         self.embd.itos.extend(['<unk>'])
         self.embd.stoi['<unk>'] = self.embd.vectors.shape[0]
-        self.embd.vectors = torch.cat([self.embd.vectors, torch.zeros(1, w_dim)], dim=0)
+        # print("here", flush=True)
+        # self.embd.vectors = torch.vstack((self.embd.vectors, torch.zeros(1, w_dim)))
     
     def __call__(self, q):
         """
@@ -35,15 +37,16 @@ class WordEmbedding(object):
         """
         return self.embd.get_vecs_by_tokens(q)
 
-def VQA2feats(feat_path):
+def VQA2feats(feat_path, feats):
     csv.field_size_limit(sys.maxsize)
 
-    feats = {}
+    feats.clear()
     fieldnames = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'features']
     with open(feat_path, 'r', encoding='ascii') as f:
         reader = csv.DictReader(f, delimiter='\t', fieldnames=fieldnames)
-        for item in tqdm.tqdm(reader, desc="feat"):
+        for item in tqdm.tqdm(reader, desc="feat", file=sys.stdout):
             feat = base64.b64decode(item['features'])
             feat = torch.frombuffer(feat, dtype=torch.float32).reshape((36, -1))
+            feat = F.normalize(feat, dim=-1)
             feats[item['image_id']] = feat
-    return feats
+            

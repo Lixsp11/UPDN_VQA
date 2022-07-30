@@ -1,12 +1,9 @@
 import sys
 import csv
-from itsdangerous import base64_decode
 import torch
 import base64
 import config
 import numpy as np
-import pandas as pd
-import torchvision
 csv.field_size_limit(sys.maxsize)
 
 if __name__ == "__main__":

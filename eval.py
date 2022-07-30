@@ -43,7 +43,7 @@ def eval_log(epoch, iteration, eval_acc, writer):
 def eval_model(model, val_loader):
     topk_acc, top1_acc = [], []
     for feats, qus, anns in val_loader:
-        feats, anns = feats.cuda(non_blocking=True), anns.cuda()
+        feats, anns = feats.cuda(non_blocking=True), anns.to(device=device)
         anns_hat = model(feats, qus)
         topk_acc_, top1_acc_ = compute_acc(anns_hat.cpu(), anns.cpu())
         topk_acc.append(topk_acc_)

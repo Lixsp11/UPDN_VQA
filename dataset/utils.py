@@ -27,8 +27,7 @@ class WordEmbedding(object):
         self.embd = torchtext.vocab.GloVe(name="840B", dim=w_dim)
         self.embd.itos.extend(['<unk>'])
         self.embd.stoi['<unk>'] = self.embd.vectors.shape[0]
-        # print("here", flush=True)
-        # self.embd.vectors = torch.vstack((self.embd.vectors, torch.zeros(1, w_dim)))
+        self.embd.vectors = torch.vstack((self.embd.vectors, torch.zeros(1, w_dim)))
     
     def __call__(self, q):
         """
@@ -47,6 +46,6 @@ def VQA2feats(feat_path, feats):
         for item in tqdm.tqdm(reader, desc="feat", file=sys.stdout):
             feat = base64.b64decode(item['features'])
             feat = torch.frombuffer(feat, dtype=torch.float32).reshape((36, -1))
-            feat = F.normalize(feat, dim=-1)
+            # feat = F.normalize(feat, dim=-1)
             feats[item['image_id']] = feat
             

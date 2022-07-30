@@ -7,13 +7,12 @@ from dataset.utils import VQA2feats
 from dataset.VQA2 import VQA2Dataset
 from model.TopDownAttention import TDAttention
 # from eval import train_log, eval_log, eval_model
-from torch.cuda.amp import autocast, GradScaler
+# from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 
 @torch.no_grad()
 def compute_acc(ann_hat, ann):
-    anns_hat = torch.sigmoid(anns_hat)
     topk_acc = 0.
     for y_hat, y in zip(ann_hat, ann):
         k = (y == 1.).sum().item()
@@ -29,7 +28,7 @@ def compute_acc(ann_hat, ann):
 
 @torch.no_grad()
 def train_log(epoch, iteration, loss, time_, anns_hat, anns, writer):
-    topk_acc, top1_acc = compute_acc(anns_hat, anns)
+    topk_acc, top1_acc = compute_acc(torch.sigmoid(anns_hat), anns)
     log = f"Epoch={epoch:03}, Iteration={iteration:06}, Loss={loss.detach().item():6.5f}, " \
           f"Top1-Acc={top1_acc:6.5f}, Topk-Acc={topk_acc:6.5f}, " \
           f"Time={time.time() - time_:2.4f}"
@@ -79,16 +78,16 @@ if __name__ == "__main__":
                             config.word_dim, config.ann_num_classes)
     # Datloader
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True,
-                                               num_workers=4, collate_fn=collate_fn, pin_memory=True)
+                                               num_workers=8, collate_fn=collate_fn, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True,
-                                             num_workers=4, collate_fn=collate_fn, pin_memory=True)
+                                             num_workers=8, collate_fn=collate_fn, pin_memory=True)
     # Model
     model = TDAttention(N=config.ann_num_classes).cuda()
     # Loss
     Loss = torch.nn.CrossEntropyLoss().cuda()
     # Optim
     optim = torch.optim.Adadelta(model.parameters(), lr=config.lr)
-    scaler = GradScaler()
+    # scaler = GradScaler()
     
     iteration, epoch, time_ = 0, 0, time.time()
     while iteration < 1e6:
@@ -96,16 +95,16 @@ if __name__ == "__main__":
         model.train()
         for feats, qus, anns in train_loader:
             iteration += 1
-            with autocast():
-                feats, qus = feats.cuda(non_blocking=True), qus.cuda(non_blocking=True)
-                anns = anns.cuda()
-                anns_hat = model(feats, qus)
-                loss = Loss(anns_hat, anns)
-            # loss.backward()
-            scaler.scale(loss).backward()
-            scaler.step(optim)
-            scaler.update()
-            # optim.step()
+            # with autocast():
+            feats, qus = feats.cuda(non_blocking=True), qus.cuda(non_blocking=True)
+            anns = anns.cuda()
+            anns_hat = model(feats, qus)
+            loss = Loss(anns_hat, anns)
+            loss.backward()
+            # scaler.scale(loss).backward()
+            # scaler.step(optim)
+            # scaler.update()
+            optim.step()
             optim.zero_grad()
 
             if iteration % 400 == 0:

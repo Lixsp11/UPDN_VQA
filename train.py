@@ -2,10 +2,8 @@ import time
 import torch
 import config
 import torch.utils.data
-from dataset import collate_fn
-from dataset.utils import VQA2feats
-from dataset.VQA2 import VQA2Dataset
 from model.TopDownAttention import TDAttention
+from dataset import Dictionary, VQAFeatureDataset
 # from eval import train_log, eval_log, eval_model
 # from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
@@ -68,25 +66,34 @@ def eval_model(model, val_loader, Loss):
 
 
 if __name__ == "__main__":
+    torch.backends.cudnn.benchmark = True
     writer = SummaryWriter("../tf-logs/")
     # Dataset
-    vqa2feats = dict()
-    VQA2feats(config.feature_tsv, vqa2feats)
-    train_dataset = VQA2Dataset(vqa2feats, config.train_questions, config.train_annotations, 
-                            config.word_dim, config.ann_num_classes)
-    val_dataset = VQA2Dataset(vqa2feats, config.val_questions, config.val_annotations, 
-                            config.word_dim, config.ann_num_classes)
+    # vqa2feats = dict()
+    # VQA2feats(config.feature_tsv, vqa2feats)
+    # train_dataset = VQA2Dataset(vqa2feats, config.train_questions, config.train_annotations, 
+    #                         config.word_dim, config.ann_num_classes)
+    # val_dataset = VQA2Dataset(vqa2feats, config.val_questions, config.val_annotations, 
+    #                         config.word_dim, config.ann_num_classes)
+    dictionary = Dictionary.load_from_file('data/dictionary.pkl')
+    print("Building train dataset...")
+    train_dset = VQAFeatureDataset('train', dictionary, dataset=config.dataset,
+                                   cache_image_features=args.cache_features)
+
+    print("Building test dataset...")
+    eval_dset = VQAFeatureDataset('val', dictionary, dataset=dataset,
+                                  cache_image_features=args.cache_features)
     # Datloader
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True,
-                                               num_workers=8, collate_fn=collate_fn, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True,
-                                             num_workers=8, collate_fn=collate_fn, pin_memory=True)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True,
+    #                                            num_workers=8, collate_fn=collate_fn, pin_memory=True)
+    # val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True,
+    #                                          num_workers=8, collate_fn=collate_fn, pin_memory=True)
     # Model
-    model = TDAttention(N=config.ann_num_classes).cuda()
+    model = TDAttention(hid_dim=config.num_hid, N=config.ann_num_classes).cuda()
     # Loss
     Loss = torch.nn.CrossEntropyLoss().cuda()
     # Optim
-    optim = torch.optim.Adadelta(model.parameters(), lr=config.lr)
+    optim = torch.optim.Adamax(model.parameters())
     # scaler = GradScaler()
     
     iteration, epoch, time_ = 0, 0, time.time()
@@ -100,7 +107,9 @@ if __name__ == "__main__":
             anns = anns.cuda()
             anns_hat = model(feats, qus)
             loss = Loss(anns_hat, anns)
+            loss *= anns.shape[-1]  # ?
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
             # scaler.scale(loss).backward()
             # scaler.step(optim)
             # scaler.update()

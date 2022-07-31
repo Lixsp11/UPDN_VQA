@@ -8,33 +8,24 @@ import torch.nn.functional as F
 
 
 class Tokenizer(object):
-    def __init__(self, vocab):
-        self.tokenizer = torchtext.data.utils.get_tokenizer("basic_english")
-        self.vocab = vocab
+    def __init__(self, idx2word, word2idx):
+        self.idx2word = idx2word
+        self.word2idx = word2idx
+        self.num_token = len(idx2word)
     
     def __call__(self, q):
         """
         
         :param q: Query string, str
-        :retrun : Tokenized query string, Dict[str]
+        :retrun : Tokenized query string, List[str]
         """
-        q = self.tokenizer(q)
-        return [word if word in self.vocab else '[unk]' for word in q]
+        q = q.lower()
+        q = q.replace(',', '').replace('?', '').replace('\'s', ' \'s').replace('-', 
+                ' ').replace('.', '').replace('"', '').replace('n\'t', ' not').replace('$', ' dollar ')
+        q = q.split()
+        idxs = [self.word2idx[word] if word in self.idx2word else self.num_token for word in q]
+        return torch.tensor(idxs)
 
-
-class WordEmbedding(object):
-    def __init__(self, w_dim):
-        self.embd = torchtext.vocab.GloVe(name="840B", dim=w_dim)
-        self.embd.itos.extend(['<unk>'])
-        self.embd.stoi['<unk>'] = self.embd.vectors.shape[0]
-        self.embd.vectors = torch.vstack((self.embd.vectors, torch.zeros(1, w_dim)))
-    
-    def __call__(self, q):
-        """
-        :param q: Tokenized query string, Dict[str]
-        :return : Embedding vector of the query string, shape=[L, W]
-        """
-        return self.embd.get_vecs_by_tokens(q)
 
 def VQA2feats(feat_path, feats):
     csv.field_size_limit(sys.maxsize)

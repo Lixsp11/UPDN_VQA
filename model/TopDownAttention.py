@@ -1,8 +1,13 @@
 import torch
+import torch.nn
+import torchtext
+import torch.nn.utils
 import torch.nn.functional as F
+from torch.nn.utils.weight_norm import weight_norm
+
 
 class TDAttention(torch.nn.Module):
-    def __init__(self, w_dim=300, v_dim=2048, hid_dim=512, N=3129):
+    def __init__(self, num_token, w_dim=300, v_dim=2048, hid_dim=512, N=3129):
         """
         
         :param w_dim: Word embedding dim.
@@ -11,60 +16,87 @@ class TDAttention(torch.nn.Module):
         :param N: Num of candidate answers.
         """
         super(TDAttention, self).__init__()
+        # Word embedding
+        self.embd = WordEmbedding(w_dim, num_token)
         # Question Embedding
-        self.gru = torch.nn.GRU(input_size=w_dim, hidden_size=hid_dim, num_layers=1, bidirectional=False, batch_first=True)
+        self.gru = torch.nn.GRU(input_size=w_dim, hidden_size=hid_dim, 
+                                num_layers=1, bidirectional=False, batch_first=True)
         # Image Attention
-        self.fa = GatedTanh(v_dim + hid_dim, hid_dim)
-        self.linear1 = torch.nn.Linear(hid_dim, 1)
+        self.v_proj = FCNet(v_dim, hid_dim)
+        self.q_proj = FCNet(hid_dim, hid_dim)
+        self.dropout1 = torch.nn.Dropout(0.2)
+        self.linear1 = weight_norm(torch.nn.Linear(hid_dim, 1), dim=None)
         # Multimodal Fusion
-        self.fq = GatedTanh(hid_dim, hid_dim)
-        self.fv = GatedTanh(v_dim, hid_dim)
-        self.dropout1 = torch.nn.Dropout(p=0.2)
+        self.fq = FCNet(hid_dim, hid_dim)
+        self.fv = FCNet(v_dim, hid_dim)
         # Output Classifier
-        self.fo_text = GatedTanh(hid_dim, w_dim)
-        self.fo_img = GatedTanh(hid_dim, v_dim)
-        self.linear2 = torch.nn.Linear(w_dim, hid_dim)
-        self.linear3 = torch.nn.Linear(v_dim, hid_dim)
-
-        self.relu1 = torch.nn.ReLU()
-        self.dropout2 = torch.nn.Dropout(p=0.2)
-        self.linear4 = torch.nn.Linear(hid_dim, N)
+        self.classifier = SimpleClassifier(hid_dim, hid_dim * 2, N)
 
 
     def forward(self, v, q):
         """
         
         :param v: Feature vector, shape=[B, K, D]
-        :param q: Question embedding vector, shape=[B, L, H]
+        :param q: Tokenized one-hot word vector, shape=[B, L, N + 1]
         :return : Predicted probability distribution, shape=[B, N]
         """
+        # Word embedding
+        q = self.embd(q)
         # Question Embedding
-        _, hidden = self.gru(q)  # hidden.shape=[1, B, H]
-        q = hidden.transpose(0, 1)  # [B, 1, H]
+        self.gru.flatten_parameters()
+        output, _ = self.gru(q)
+        q = output[:, -1]  # shape=[B, H]
         # Image Attention
-        a = torch.concat((v, q.broadcast_to(*v.shape[:2], q.shape[-1])), dim=-1)
-        a = self.linear1(self.fa(a))  # [B, K, 1]
-        a = torch.softmax(a, dim=-2)  # [B, K, 1]
+        v = self.v_proj(v)
+        q = self.q_proj(q).broadcast_to(*v.shape[:2], q.shape[-1])
+        a = self.linear1(self.dropout1(v * q))
+        a = torch.softmax(a, dim=-2)  # ?
         v_hat = torch.mul(a, v).sum(dim=-2, keepdim=False)  # [B, D]
         # Multimodal Fusion
-        h = self.dropout1(self.fq(q.squeeze(1)) * self.fv(v_hat))  # [B, H]
-        # Output Classifier
-        y = self.linear2(self.fo_text(h)) + self.linear3(self.fo_img(h))
-        y = self.linear4(self.dropout2(self.relu1(y))) # [B, N]
-        if self.training:
-            return y
-        else:
-            return torch.sigmoid(y)
+        h = self.fq(q) * self.fv(v_hat)  # [B, H]
+        # # Output Classifier
+        return self.classifier(h)
 
-class GatedTanh(torch.nn.Module):
+class WordEmbedding(torch.nn.Module):
+    def __init__(self, w_dim, num_token):
+        self.embd = torch.nn.Embedding(num_token + 1, w_dim, padding_idx=num_token)
+        self.num_token = num_token
+
+    def init_weight(self, weight):
+        assert weight.shape == self.embd.weight[1:].shape
+        self.embd.weight.data[:self.num_token] = weight
+
+
+    def forward(self, q):
+        """
+        :param q: Tokenized query string, List[List[str]]
+        :return : Embedding vector of the query string, shape=[L, W]
+        """
+        return self.embd(q)
+
+
+class FCNet(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
-        super(GatedTanh, self).__init__()
-        self.linear1 = torch.nn.Linear(in_dim, out_dim, bias=True)
-        self.linear2 = torch.nn.Linear(in_dim, out_dim, bias=True)
-        self.dropout = torch.nn.Dropout(p=0.2)
-    
+        super(FCNet, self).__init__()
+
+        self.linear = weight_norm(torch.nn.Linear(in_dim, out_dim), dim=None)
+        self.relu = torch.nn.ReLU()
+
     def forward(self, x):
-        y_hat = torch.tanh(self.linear1(x))
-        g = torch.sigmoid(self.linear2(x))
-        y = torch.mul(y_hat, g)
-        return self.dropout(y)
+        return self.relu(self.linear(x))
+
+
+class SimpleClassifier(torch.nn.Module):
+    def __init__(self, in_dim, hid_dim, out_dim, dropout=0.5):
+        super(SimpleClassifier, self).__init__()
+        layers = [
+            weight_norm(torch.nn.Linear(in_dim, hid_dim), dim=None),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(dropout, inplace=True),
+            weight_norm(torch.nn.Linear(hid_dim, out_dim), dim=None)
+        ]
+        self.main = torch.nn.Sequential(*layers)
+
+    def forward(self, x):
+        logits = self.main(x)
+        return logits

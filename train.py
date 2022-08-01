@@ -3,7 +3,7 @@ import json
 import torch
 import config
 import torch.utils.data
-from model.TopDownAttention_m import TDAttention
+from model.TopDownAttention import TDAttention
 from dataset.VQA2 import Dictionary, VQAFeatureDataset
 # from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter

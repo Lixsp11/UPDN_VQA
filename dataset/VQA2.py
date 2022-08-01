@@ -3,16 +3,12 @@ from __future__ import unicode_literals
 
 import os
 import json
-import cPickle
-from collections import Counter
-
-import numpy as np
-import utils
-import h5py
+import dataset.utils as utils
 import torch
-from torch.utils.data import Dataset
+import numpy as np
 from tqdm import tqdm
-from random import choice
+import _pickle as cPickle
+from torch.utils.data import Dataset
 
 class Dictionary(object):
     def __init__(self, word2idx=None, idx2word=None):
@@ -69,44 +65,27 @@ class Dictionary(object):
         return len(self.idx2word)
 
 
-def _create_entry(img_idx, question, answer):
+def _create_entry(question, answer):
     answer.pop('image_id')
     answer.pop('question_id')
     entry = {
         'question_id' : question['question_id'],
         'image_id'    : question['image_id'],
-        'image_idx'       : img_idx,
         'question'    : question['question'],
         'answer'      : answer
     }
     return entry
 
 
-def _load_dataset(dataroot, name, img_id2val, dataset):
+def _load_dataset(dataroot, name):
     """Load entries
 
-    img_id2val: dict {img_id -> val} val can be used to retrieve image or features
-    dataroot: root path of dataset
     name: 'train', 'val'
     """
-    if dataset=='cpv2':
-      answer_path = os.path.join(dataroot, 'cp-cache', '%s_target.pkl' % name)
-      name = "train" if name == "train" else "test"
-      question_path = os.path.join(dataroot, 'vqacp_v2_%s_questions.json' % name)
-      with open(question_path) as f:
-        questions = json.load(f)
-    elif dataset=='cpv1':
-      answer_path = os.path.join(dataroot, 'cp-v1-cache', '%s_target.pkl' % name)
-      name = "train" if name == "train" else "test"
-      question_path = os.path.join(dataroot, 'vqacp_v1_%s_questions.json' % name)
-      with open(question_path) as f:
-        questions = json.load(f)
-    elif dataset=='v2':
-      answer_path = os.path.join(dataroot, 'cache', '%s_target.pkl' % name)
-      question_path = os.path.join(dataroot, 'v2_OpenEnded_mscoco_%s2014_questions.json' % name)
-      with open(question_path) as f:
+    answer_path = os.path.join(dataroot, 'cache', '%s_target.pkl' % name)
+    question_path = os.path.join(dataroot, 'v2_OpenEnded_mscoco_%s2014_questions.json' % name)
+    with open(question_path) as f:
         questions = json.load(f)["questions"]
-
     with open(answer_path, 'rb') as f:
       answers = cPickle.load(f)
 
@@ -120,98 +99,37 @@ def _load_dataset(dataroot, name, img_id2val, dataset):
             raise ValueError()
         utils.assert_eq(question['question_id'], answer['question_id'])
         utils.assert_eq(question['image_id'], answer['image_id'])
-        img_id = question['image_id']
-        img_idx = None
-        if img_id2val:
-          img_idx = img_id2val[img_id]
-
-        entries.append(_create_entry(img_idx, question, answer))
+        entries.append(_create_entry(question, answer))
     return entries
 
 
 class VQAFeatureDataset(Dataset):
-    def __init__(self, name, dictionary, dataroot='data', dataset='cpv2',
-                 use_hdf5=False, cache_image_features=False):
+    def __init__(self, name, dictionary, dataroot='data'):
         super(VQAFeatureDataset, self).__init__()
+        
         self.name=name
-        if dataset=='cpv2':
-            with open('data/train_cpv2_hintscore.json', 'r') as f:
-                self.train_hintscore = json.load(f)
-            with open('data/test_cpv2_hintscore.json', 'r') as f:
-                self.test_hintsocre = json.load(f)
-            with open('util/cpv2_type_mask.json', 'r') as f:
-                self.type_mask = json.load(f)
-            with open('util/cpv2_notype_mask.json', 'r') as f:
-                self.notype_mask = json.load(f)
-
-        elif dataset=='cpv1':
-            with open('data/train_cpv1_hintscore.json', 'r') as f:
-                self.train_hintscore = json.load(f)
-            with open('data/test_cpv1_hintscore.json', 'r') as f:
-                self.test_hintsocre = json.load(f)
-            with open('util/cpv1_type_mask.json', 'r') as f:
-                self.type_mask = json.load(f)
-            with open('util/cpv1_notype_mask.json', 'r') as f:
-                self.notype_mask = json.load(f)
-        elif dataset=='v2':
-            with open('data/train_v2_hintscore.json', 'r') as f:
-                self.train_hintscore = json.load(f)
-            with open('data/test_v2_hintscore.json', 'r') as f:
-                self.test_hintsocre = json.load(f)
-            with open('util/v2_type_mask.json', 'r') as f:
-                self.type_mask = json.load(f)
-            with open('util/v2_notype_mask.json', 'r') as f:
-                self.notype_mask = json.load(f)
-
         assert name in ['train', 'val']
 
-        if dataset=='cpv2':
-            ans2label_path = os.path.join(dataroot, 'cp-cache', 'trainval_ans2label.pkl')
-            label2ans_path = os.path.join(dataroot, 'cp-cache', 'trainval_label2ans.pkl')
-        elif dataset=='cpv1':
-            ans2label_path = os.path.join(dataroot, 'cp-v1-cache', 'trainval_ans2label.pkl')
-            label2ans_path = os.path.join(dataroot, 'cp-v1-cache', 'trainval_label2ans.pkl')
-        elif dataset=='v2':
-            ans2label_path = os.path.join(dataroot, 'cache', 'trainval_ans2label.pkl')
-            label2ans_path = os.path.join(dataroot, 'cache', 'trainval_label2ans.pkl')
+        ans2label_path = os.path.join(dataroot, 'cache', 'trainval_ans2label.pkl')
+        label2ans_path = os.path.join(dataroot, 'cache', 'trainval_label2ans.pkl')
         self.ans2label = cPickle.load(open(ans2label_path, 'rb'))
         self.label2ans = cPickle.load(open(label2ans_path, 'rb'))
         self.num_ans_candidates = len(self.ans2label)
 
         self.dictionary = dictionary
-        self.use_hdf5 = use_hdf5
 
-        if use_hdf5:
-            h5_path = os.path.join(dataroot, '%s36.hdf5'%name)
-            self.hf = h5py.File(h5_path, 'r')
-            self.features = self.hf.get('image_features')
-
-            with open("util/%s36_imgid2img.pkl"%name, "rb") as f:
-                imgid2idx = cPickle.load(f)
-        else:
-            imgid2idx = None
-
-        self.entries = _load_dataset(dataroot, name, imgid2idx, dataset=dataset)
-        if cache_image_features:
-            image_to_fe = {}
-            for entry in tqdm(self.entries, ncols=100, desc="caching-features"):
-                img_id = entry["image_id"]
-                if img_id not in image_to_fe:
-                    if use_hdf5:
-                        fe = np.array(self.features[imgid2idx[img_id]])
-                    else:
-                        fe=torch.load('data/rcnn_feature/'+str(img_id)+'.pth')['image_feature']
-                    image_to_fe[img_id]=fe
-            self.image_to_fe = image_to_fe
-            if use_hdf5:
-                self.hf.close()
-        else:
-            self.image_to_fe = None
+        self.entries = _load_dataset(dataroot, name)
+        image_to_fe = {}
+        for entry in tqdm(self.entries, ncols=100, desc="caching-features"):
+            img_id = entry["image_id"]
+            if img_id not in image_to_fe:
+                fe = torch.load('data/rcnn_feature/'+str(img_id)+'.pth', encoding='bytes')
+                fe = torch.from_numpy(fe[b'image_feature'])
+                image_to_fe[img_id]=fe
+        self.image_to_fe = image_to_fe
 
         self.tokenize()
         self.tensorize()
-
-        self.v_dim = 2048
 
     def tokenize(self, max_length=14):
         """Tokenizes the questions.
@@ -225,21 +143,15 @@ class VQAFeatureDataset(Dataset):
             if len(tokens) < max_length:
                 # Note here we pad in front of the sentence
                 padding = [self.dictionary.padding_idx] * (max_length - len(tokens))
-                padding_mask=[self.dictionary.padding_idx-1] * (max_length - len(tokens))
-                tokens_mask = padding_mask + tokens
                 tokens = padding + tokens
 
             utils.assert_eq(len(tokens), max_length)
             entry['q_token'] = tokens
-            entry['q_token_mask']=tokens_mask
 
     def tensorize(self):
         for entry in tqdm(self.entries, ncols=100, desc="tensorize"):
             question = torch.from_numpy(np.array(entry['q_token']))
-            question_mask = torch.from_numpy(np.array(entry['q_token_mask']))
-
             entry['q_token'] = question
-            entry['q_token_mask']=question_mask
 
             answer = entry['answer']
             labels = np.array(answer['labels'])
@@ -255,39 +167,18 @@ class VQAFeatureDataset(Dataset):
 
     def __getitem__(self, index):
         entry = self.entries[index]
-        if self.image_to_fe is not None:
-            features = self.image_to_fe[entry["image_id"]]
-        elif self.use_hdf5:
-            features = np.array(self.features[entry['image_idx']])
-            features = torch.from_numpy(features).view(36, 2048)
-        else:
-            features = torch.load('data/rcnn_feature/' + str(entry["image_id"]) + '.pth')['image_feature']
-
+        features = self.image_to_fe[entry["image_id"]]
         q_id=entry['question_id']
-        ques = entry['q_token']
-        ques_mask=entry['q_token_mask']
         answer = entry['answer']
         labels = answer['labels']
         scores = answer['scores']
+        ques = entry['q_token']
+
         target = torch.zeros(self.num_ans_candidates)
         if labels is not None:
             target.scatter_(0, labels, scores)
 
-        if self.name=='train':
-            train_hint=torch.tensor(self.train_hintscore[str(q_id)])
-            type_mask=torch.tensor(self.type_mask[str(q_id)])
-            notype_mask=torch.tensor(self.notype_mask[str(q_id)])
-            if "bias" in entry:
-                return features, ques, target,entry["bias"],train_hint,type_mask,notype_mask,ques_mask
-
-            else:
-                return features, ques,target, 0,train_hint
-        else:
-            test_hint=torch.tensor(self.test_hintsocre[str(q_id)])
-            if "bias" in entry:
-                return features, ques, target, entry["bias"],q_id,test_hint
-            else:
-                return features, ques, target, 0,q_id,test_hint
+        return features, ques, target, q_id
 
     def __len__(self):
         return len(self.entries)

@@ -1,15 +1,16 @@
 import torch
 import torch.nn
-import torchtext
+import numpy as np
 import torch.nn.utils
 import torch.nn.functional as F
 from torch.nn.utils.weight_norm import weight_norm
 
 
 class TDAttention(torch.nn.Module):
-    def __init__(self, num_token, w_dim=300, v_dim=2048, hid_dim=512, N=3129):
+    def __init__(self, embd_weight_path, w_dim=300, v_dim=2048, hid_dim=512, N=3129):
         """
         
+        :param embd_weight_path: Path of pretrained word embdeeing weight
         :param w_dim: Word embedding dim.
         :param v_dim: Feature vector dim.
         :param hid_dim: Hidden dim of GRU.
@@ -17,7 +18,7 @@ class TDAttention(torch.nn.Module):
         """
         super(TDAttention, self).__init__()
         # Word embedding
-        self.embd = WordEmbedding(w_dim, num_token)
+        self.embd = WordEmbedding(embd_weight_path)
         # Question Embedding
         self.gru = torch.nn.GRU(input_size=w_dim, hidden_size=hid_dim, 
                                 num_layers=1, bidirectional=False, batch_first=True)
@@ -37,7 +38,7 @@ class TDAttention(torch.nn.Module):
         """
         
         :param v: Feature vector, shape=[B, K, D]
-        :param q: Tokenized one-hot word vector, shape=[B, L, N + 1]
+        :param q: Tokenized word vector, shape=[B, L]
         :return : Predicted probability distribution, shape=[B, N]
         """
         # Word embedding
@@ -47,9 +48,10 @@ class TDAttention(torch.nn.Module):
         output, _ = self.gru(q)
         q = output[:, -1]  # shape=[B, H]
         # Image Attention
-        v = self.v_proj(v)
-        q = self.q_proj(q).broadcast_to(*v.shape[:2], q.shape[-1])
-        a = self.linear1(self.dropout1(v * q))
+        v_ = self.v_proj(v)  # shape=[B, K, H]
+        q_ = self.q_proj(q)  # shape=[B, H]
+        q_ = q_.unsqueeze(1).broadcast_to(*v_.shape[:2], q_.shape[-1])  # shape=[B, K, H]
+        a = self.linear1(self.dropout1(v_ * q_))  # shape=[B, K, 1]
         a = torch.softmax(a, dim=-2)  # ?
         v_hat = torch.mul(a, v).sum(dim=-2, keepdim=False)  # [B, D]
         # Multimodal Fusion
@@ -58,14 +60,13 @@ class TDAttention(torch.nn.Module):
         return self.classifier(h)
 
 class WordEmbedding(torch.nn.Module):
-    def __init__(self, w_dim, num_token):
-        self.embd = torch.nn.Embedding(num_token + 1, w_dim, padding_idx=num_token)
-        self.num_token = num_token
+    def __init__(self, weight_path):
+        super(WordEmbedding, self).__init__()
 
-    def init_weight(self, weight):
-        assert weight.shape == self.embd.weight[1:].shape
-        self.embd.weight.data[:self.num_token] = weight
-
+        weight = torch.from_numpy(np.load(weight_path))
+        weight = torch.vstack((weight, torch.zeros(weight.shape[1])))
+        self.embd = torch.nn.Embedding.from_pretrained(weight, freeze=False, 
+                                                        padding_idx=weight.shape[0] - 1)
 
     def forward(self, q):
         """
@@ -92,7 +93,7 @@ class SimpleClassifier(torch.nn.Module):
         layers = [
             weight_norm(torch.nn.Linear(in_dim, hid_dim), dim=None),
             torch.nn.ReLU(),
-            torch.nn.Dropout(dropout, inplace=True),
+            torch.nn.Dropout(dropout),
             weight_norm(torch.nn.Linear(hid_dim, out_dim), dim=None)
         ]
         self.main = torch.nn.Sequential(*layers)

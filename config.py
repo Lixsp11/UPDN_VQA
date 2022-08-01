@@ -10,6 +10,6 @@ feature_tsv = root_path + "trainval_resnet101_faster_rcnn_genome_36.tsv"
 
 word_dim = 300
 num_hid = 1024
-ann_num_classes = 4902
+ann_num_classes = 2410
 
 batch_size = 512
